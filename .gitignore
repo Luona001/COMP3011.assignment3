@@ -1,0 +1,10 @@
+
+target/
+.classpath
+.project
+.settings/
+.idea/
+*.class
+key.txt
+*.mp4
+movie.mp4
