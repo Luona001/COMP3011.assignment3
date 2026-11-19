@@ -19,9 +19,11 @@ public class ServerStatsService {
     private final Instant serverStartTime;
     private final AtomicLong inputTokens;
     private final AtomicLong outputTokens;
+    private final AtomicLong usageMicros;
     private final AtomicBoolean shutdownInProgress;
 
     public ServerStatsService() {
+    	this.usageMicros = new AtomicLong(0);
         this.serverStartTime = Instant.now();
         this.inputTokens = new AtomicLong(0);
         this.outputTokens = new AtomicLong(0);
@@ -51,5 +53,17 @@ public class ServerStatsService {
 
     public boolean tryStartShutdown() {
         return shutdownInProgress.compareAndSet(false, true);
+    }
+    
+    public void addUsageSeconds(double seconds) {
+        if (seconds > 0) {
+            usageMicros.addAndGet(
+                (long) Math.round(seconds * 1_000_000)
+            );
+        }
+    }
+    
+    public double getUsageSeconds() {
+        return usageMicros.get() / 1_000_000.0;
     }
 }
