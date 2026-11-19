@@ -36,4 +36,15 @@ public class GlobalStatsController {
                 "outputTokens", statsService.getOutputTokens()
         ));
     }
+    
+    /**
+     * Endpoint: GET /api/v1/global/usage
+     * Returns cumulative audio transcription usage in seconds.
+     */
+    @GetMapping("/usage")
+    public ResponseEntity<Map<String, Object>> getUsage() {
+        return ResponseEntity.ok(Map.of(
+            "usage", statsService.getUsageSeconds()
+        ));
+    }
 }
