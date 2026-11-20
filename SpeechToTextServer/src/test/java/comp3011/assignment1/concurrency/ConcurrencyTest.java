@@ -17,7 +17,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@TestPropertySource(properties = "openai.api.key=test-key")
+@TestPropertySource(properties = {
+        "openai.api.key=test-key",
+        "server.tomcat.accept-count=1000"
+})
+
 class ConcurrencyTest {
 
     @LocalServerPort
