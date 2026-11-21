@@ -44,6 +44,7 @@ class CommandLineControllerTest {
                   -m, --mottle-frames    Add cloudy emulsion mottling
                   -b, --bleed-frames     Bleed light into frames
                   -p, --pepper-frames    Pepper frames with dark spots/blotches
+                  -S, --subtitle-frames  Add speech-to-text subtitles to frames
 
                 Frame processors are applied in command-line order and may be repeated.
                 Example: -nssnfwyvdjmbp numbers, scratches twice, numbers again, flickers,
@@ -201,5 +202,28 @@ class CommandLineControllerTest {
         assertTrue(c.getErrorMessage().contains(
                 "Only one display option can be used"));
         assertEquals(1, c.getExitCode());
+    }
+    
+    @Test
+    void subtitleFlagIsParsedShortLongAndStacked(
+            @TempDir Path tempDir) throws IOException {
+
+        Path movie = Files.createFile(tempDir.resolve("movie.mp4"));
+
+        CommandLineController shortForm = new CommandLineController(
+                new String[]{"-S", movie.toString()});
+        CommandLineController longForm = new CommandLineController(
+                new String[]{"--subtitle-frames", movie.toString()});
+        CommandLineController stacked = new CommandLineController(
+                new String[]{"-nSf", movie.toString()});
+
+        assertEquals(List.of(FrameProcessorType.SUBTITLE),
+                shortForm.getFrameProcessorTypes());
+        assertEquals(shortForm.getFrameProcessorTypes(),
+                longForm.getFrameProcessorTypes());
+        assertEquals(List.of(FrameProcessorType.NUMBER,
+                        FrameProcessorType.SUBTITLE,
+                        FrameProcessorType.FLICKER),
+                stacked.getFrameProcessorTypes());
     }
 }
