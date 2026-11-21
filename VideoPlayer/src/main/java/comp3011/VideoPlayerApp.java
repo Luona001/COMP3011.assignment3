@@ -61,6 +61,13 @@ public class VideoPlayerApp extends Application {
         stage.outputScaleYProperty().addListener((_, _, _) -> updateVideoSize());
         stage.setOnCloseRequest(_ -> controller.shutdown());
 
+        if (commandLineController.getFrameProcessorTypes()
+                .contains(FrameProcessorType.SUBTITLE)) {
+            SubtitleFetcher.start(
+                    commandLineController.getVideoFile(),
+                    controller::onSubtitleStatus);
+        }
+        
         playVideo();
     }
 
