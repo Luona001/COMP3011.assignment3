@@ -30,6 +30,7 @@ import javafx.scene.input.KeyEvent;
 public class VideoPlayerController {
     private final VideoPlayerModel model;
     private final VideoPlayerView view;
+    private final boolean subtitlesSupported;
     private final BiConsumer<Integer, Integer> videoSizeChangedHandler;
 
     public VideoPlayerController(
@@ -54,6 +55,13 @@ public class VideoPlayerController {
         view.getStopButton().setOnAction(_ -> stopAndExit());
         view.getAudioButton().setOnAction(_ -> toggleAudioOutput());
         view.showAudioEnabled(model.isAudioOutputEnabled());
+        subtitlesSupported = frameProcessorTypes.contains(FrameProcessorType.SUBTITLE);
+        view.setSubtitlesSupported(subtitlesSupported);
+        view.getSubtitleButton().setOnAction(_ -> toggleSubtitles());
+
+        if (subtitlesSupported) {
+            view.showSubtitleEnabled(true);
+        }
     }
 
     public void installKeyboardShortcuts(Scene scene) {
@@ -75,6 +83,9 @@ public class VideoPlayerController {
                 event.consume();
             } else if (event.getCode() == KeyCode.A) {
                 toggleAudioOutput();
+                event.consume();
+            } else if (event.getCode() == KeyCode.S) {
+                toggleSubtitles();
                 event.consume();
             }
         });
@@ -140,5 +151,17 @@ public class VideoPlayerController {
 
     private void onAudioOutputStateChanged(boolean audioOutputEnabled) {
         view.showAudioEnabled(audioOutputEnabled);
+    }
+    
+    private void toggleSubtitles() {
+        if (!subtitlesSupported) {
+            return;
+        }
+        boolean nowVisible = SubtitleTrack.get().toggleVisible();
+        view.showSubtitleEnabled(nowVisible);
+    }
+    
+    public void onSubtitleStatus(String message) {
+        javafx.application.Platform.runLater(() -> view.setStatus(message));
     }
 }
