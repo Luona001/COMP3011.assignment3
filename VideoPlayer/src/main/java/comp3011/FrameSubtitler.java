@@ -12,6 +12,8 @@ import java.awt.font.GlyphVector;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferByte;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.bytedeco.javacv.Frame;
 
@@ -32,6 +34,20 @@ public class FrameSubtitler extends FrameProcessor {
 
     private final SubtitleTrack track = SubtitleTrack.get();
 
+    private BufferedImage image;
+    private byte[] data;
+    private Graphics2D graphics;
+    
+    private int cachedWidth = -1;
+    private int cachedHeight = -1;
+    
+    private Font font;
+    private FontMetrics fontMetrics;
+    private BasicStroke outlineStroke;
+
+    private List<String> cachedLines;
+    private List<Shape> cachedShapes;
+    
     @Override
     public void process(Frame frame, InfoFrame info) throws Exception {
         if (!track.isVisible() || track.status() != SubtitleTrack.Status.READY) {
@@ -47,6 +63,88 @@ public class FrameSubtitler extends FrameProcessor {
             System.err.println("Subtitle render skipped: " + e);
         }
     }
+    
+    private void ensureImage(int width, int height) {
+        if (image != null
+                && cachedWidth == width
+                && cachedHeight == height) {
+            return;
+        }
+
+        if (graphics != null) {
+            graphics.dispose();
+        }
+
+        image = new BufferedImage(
+                width,
+                height,
+                BufferedImage.TYPE_3BYTE_BGR
+        );
+
+        DataBufferByte buffer =
+                (DataBufferByte) image.getRaster().getDataBuffer();
+
+        data = buffer.getData();
+
+        graphics = image.createGraphics();
+
+        graphics.setRenderingHint(
+                RenderingHints.KEY_TEXT_ANTIALIASING,
+                RenderingHints.VALUE_TEXT_ANTIALIAS_ON
+        );
+
+        cachedWidth = width;
+        cachedHeight = height;
+
+        int fontSize = Math.max(14, height / 24);
+
+        font = new Font(
+                Font.SANS_SERIF,
+                Font.BOLD,
+                fontSize
+        );
+
+        graphics.setFont(font);
+
+        fontMetrics = graphics.getFontMetrics(font);
+
+        outlineStroke = new BasicStroke(
+                Math.max(2f, fontSize / 7f),
+                BasicStroke.CAP_ROUND,
+                BasicStroke.JOIN_ROUND
+        );
+
+        cachedLines = null;
+        cachedShapes = null;
+    }
+    
+    private void cacheShapes(SubtitleTrack.Cue cue, int width, int height) {
+
+        List<String> lines = List.copyOf(cue.lines());
+        if (cachedShapes != null && lines.equals(cachedLines)) {
+            return;
+        }
+        List<Shape> shapes = new ArrayList<>();
+        int lineHeight = fontMetrics.getHeight();
+        int blockHeight = lineHeight * lines.size();
+        int margin = Math.max(8, height / 18);
+        FontRenderContext frc = graphics.getFontRenderContext();
+        for (int i = 0; i < lines.size(); i++) {
+            String line = lines.get(i);
+            int x = (width - fontMetrics.stringWidth(line)) / 2;
+            int baseline = height - margin - blockHeight
+                    + i * lineHeight
+                    + fontMetrics.getAscent();
+            GlyphVector glyphs = font.createGlyphVector(frc, line);
+            Shape outline = glyphs.getOutline(
+                    (float) x,
+                    (float) baseline
+            );
+            shapes.add(outline);
+        }
+        cachedLines = lines;
+        cachedShapes = shapes;
+    }
 
     private void drawCue(Frame frame, SubtitleTrack.Cue cue) {
         if (frame.image == null || frame.image.length == 0
@@ -61,46 +159,37 @@ public class FrameSubtitler extends FrameProcessor {
         int height = videoInfo.imageHeight();
         int channels = videoInfo.imageChannels();
         int stride = videoInfo.imageStride();
+
         if (width <= 0 || height <= 0 || channels < 3) {
             return;
         }
-
-        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_3BYTE_BGR);
-        DataBufferByte buffer = (DataBufferByte) image.getRaster().getDataBuffer();
-        byte[] data = buffer.getData();
-        copyPixelsIn(pixels, data, width, height, channels, stride);
-
-        Graphics2D g = image.createGraphics();
-        try {
-            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
-                    RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            int fontSize = Math.max(14, height / 24);
-            Font font = new Font(Font.SANS_SERIF, Font.BOLD, fontSize);
-            g.setFont(font);
-            FontMetrics metrics = g.getFontMetrics(font);
-            int lineHeight = metrics.getHeight();
-            int blockHeight = lineHeight * cue.lines().size();
-            int margin = Math.max(8, height / 18);
-            FontRenderContext frc = g.getFontRenderContext();
-
-            for (int i = 0; i < cue.lines().size(); i++) {
-                String line = cue.lines().get(i);
-                int x = (width - metrics.stringWidth(line)) / 2;
-                int baseline = height - margin - blockHeight + i * lineHeight
-                        + metrics.getAscent();
-                GlyphVector glyphs = font.createGlyphVector(frc, line);
-                Shape outline = glyphs.getOutline((float) x, (float) baseline);
-                g.setColor(Color.BLACK);
-                g.setStroke(new BasicStroke(Math.max(2f, fontSize / 7f),
-                        BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                g.draw(outline);
-                g.setColor(Color.WHITE);
-                g.fill(outline);
-            }
-        } finally {
-            g.dispose();
+        ensureImage(width, height);
+        cacheShapes(cue, width, height);
+        copyPixelsIn(
+                pixels,
+                data,
+                width,
+                height,
+                channels,
+                stride
+        );
+        graphics.setStroke(outlineStroke);
+        graphics.setColor(Color.BLACK);
+        for (Shape shape : cachedShapes) {
+            graphics.draw(shape);
         }
-        copyPixelsOut(pixels, data, width, height, channels, stride);
+        graphics.setColor(Color.WHITE);
+        for (Shape shape : cachedShapes) {
+            graphics.fill(shape);
+        }
+        copyPixelsOut(
+                pixels,
+                data,
+                width,
+                height,
+                channels,
+                stride
+        );
     }
 
     private void copyPixelsIn(ByteBuffer pixels, byte[] data,

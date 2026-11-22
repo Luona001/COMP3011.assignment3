@@ -112,8 +112,7 @@ public final class SubtitleFetcher {
             int channels = Math.max(1, grabber.getAudioChannels());
 
             ByteArrayOutputStream mp3 = new ByteArrayOutputStream();
-            FFmpegFrameRecorder recorder =
-                    new FFmpegFrameRecorder(mp3, 0, 0, channels);
+            FFmpegFrameRecorder recorder = new FFmpegFrameRecorder(mp3, 0, 0, channels);
             recorder.setFormat("mp3");
             recorder.setSampleRate(sampleRate);
             recorder.setAudioChannels(channels);
