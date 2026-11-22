@@ -42,11 +42,13 @@ public class WhisperSubtitleService {
     private static final Logger log = LoggerFactory.getLogger(WhisperSubtitleService.class);
     private static final double NO_SPEECH_THRESHOLD = 0.6;
     private static final double AVG_LOG_PROB_THRESHOLD = -1.0;
+    static record Entry(byte[] audio, String result) {
+    }
 
     private final RestClient restClient;
     private final ServerStatsService statsService;
     private final ObjectMapper mapper = new ObjectMapper();
-    private final ConcurrentHashMap<String, String> cache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Entry> cache = new ConcurrentHashMap<>();
     private final String configuredKey;
 
     public WhisperSubtitleService(
@@ -79,10 +81,19 @@ public class WhisperSubtitleService {
         byte[] bytes = audio.getBytes();
         String cacheKey = sha256Hex(bytes);
 
-        String cached = cache.get(cacheKey);
+        Entry cached = cache.get(cacheKey);
         if (cached != null) {
-            log.info("Subtitle cache hit ({} bytes) - skipping OpenAI", bytes.length);
-            return cached;
+            log.info("Subtitle exact cache hit ({} bytes) - skipping OpenAI",
+                    bytes.length);
+            return cached.result();
+        }
+        
+        for (Entry entry : cache.values()) {
+            if (prefixHit(entry.audio(), bytes)) {
+                log.info("Subtitle prefix cache hit ({} bytes) - skipping OpenAI",
+                        bytes.length);
+                return entry.result();
+            }
         }
 
         String response = callWhisper(bytes, audio.getOriginalFilename());
@@ -92,7 +103,7 @@ public class WhisperSubtitleService {
         statsService.addUsageSeconds(duration);   // only real API calls count
 
         String result = filterAndShape(root);
-        cache.put(cacheKey, result);
+        cache.put(cacheKey, new Entry(bytes.clone(), result));
         log.info("Subtitle transcription ok: duration={}s segments={}",
                 duration, root.path("segments").size());
         return result;
@@ -179,6 +190,19 @@ public class WhisperSubtitleService {
         }
         throw new IllegalStateException(
                 "No OpenAI API key: set OPENAI_API_KEY or place key.txt in the working directory");
+    }
+    
+    static boolean prefixHit(byte[] candidate, byte[] requested) {
+        if (requested.length > candidate.length) {
+            return false;
+        }
+
+        for (int i = 0; i < requested.length; i++) {
+            if (candidate[i] != requested[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static String sha256Hex(byte[] data) throws Exception {
