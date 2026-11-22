@@ -33,6 +33,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * - In-memory cache keyed by SHA-256 of the audio bytes: repeat plays of the
  *   same media skip the paid API call and return instantly (also keeps
  *   /usage accurate - only real API calls add usage).
+ * - WAV excerpts of a cached file are matched by PCM byte region and their segment
+ *   timestamps shifted, so re-playing part of the same media also skips the paid call.
  * - Segments with no_speech_prob > 0.6 AND avg_logprob < -1.0 are filtered
  *   out per the Assignment 3 specification.
  */
@@ -89,10 +91,11 @@ public class WhisperSubtitleService {
         }
         
         for (Entry entry : cache.values()) {
-            if (prefixHit(entry.audio(), bytes)) {
-                log.info("Subtitle prefix cache hit ({} bytes) - skipping OpenAI",
-                        bytes.length);
-                return entry.result();
+            int offset = wavRegionOffset(entry.audio(), bytes);
+            if (offset >= 0) {
+                log.info("Subtitle region cache hit ({} bytes at PCM offset {}) - skipping OpenAI",
+                        bytes.length, offset);
+                return shiftSegments(entry.result(), excerptShiftSeconds(entry.audio(), offset));
             }
         }
 
@@ -192,17 +195,74 @@ public class WhisperSubtitleService {
                 "No OpenAI API key: set OPENAI_API_KEY or place key.txt in the working directory");
     }
     
-    static boolean prefixHit(byte[] candidate, byte[] requested) {
-        if (requested.length > candidate.length) {
-            return false;
+    static final int WAV_HEADER_BYTES = 44;
+    /**
+     * Offset of the requested WAV's audio payload inside the cached WAV's payload,
+     * or -1. Returns WAV_HEADER_BYTES for an exact-prefix match.
+     * shortcut: naive O(n*m) scan - fine for short excerpts, worst case slow on
+     * silence-heavy audio; upgrade to a rolling hash if noticed.
+     */
+    static int wavRegionOffset(byte[] stored, byte[] requested) {
+        if (requested.length <= WAV_HEADER_BYTES || stored.length < requested.length) {
+            return -1;
         }
-
-        for (int i = 0; i < requested.length; i++) {
-            if (candidate[i] != requested[i]) {
-                return false;
+        if (!isWav(stored) || !isWav(requested)) {
+            return -1;
+        }
+        int pcmLen = requested.length - WAV_HEADER_BYTES;
+        outer:
+        for (int i = WAV_HEADER_BYTES; i <= stored.length - pcmLen; i++) {
+            if (stored[i] != requested[WAV_HEADER_BYTES]) {
+                continue;
             }
+            for (int j = 1; j < pcmLen; j++) {
+                if (stored[i + j] != requested[WAV_HEADER_BYTES + j]) {
+                    continue outer;
+                }
+            }
+            return i;
         }
-        return true;
+        return -1;
+    }
+
+    static double excerptShiftSeconds(byte[] stored, int pcmOffset) {
+        int byteRate = pcmOffset >= WAV_HEADER_BYTES && isWav(stored) ? readLeInt(stored, 28) : 0;
+        return byteRate > 0 ? (pcmOffset - WAV_HEADER_BYTES) / (double) byteRate : 0.0;
+    }
+
+    static String shiftSegments(String result, double shiftSeconds) throws Exception {
+        if (shiftSeconds <= 0) {
+            return result;
+        }
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode root = (ObjectNode) mapper.readTree(result);
+        ArrayNode segments = (ArrayNode) root.get("segments");
+        ArrayNode kept = mapper.createArrayNode();
+        if (segments != null) {
+            for (JsonNode s : segments) {
+                double end = s.path("end").asDouble() - shiftSeconds;
+                if (end <= 0) {
+                    continue;
+                }
+                ObjectNode seg = (ObjectNode) s;
+                seg.put("start", Math.max(0.0, seg.path("start").asDouble() - shiftSeconds));
+                seg.put("end", end);
+                kept.add(seg);
+            }
+            root.set("segments", kept);
+        }
+        return mapper.writeValueAsString(root);
+    }
+
+    private static boolean isWav(byte[] b) {
+        return b.length >= WAV_HEADER_BYTES
+                && b[0] == 'R' && b[1] == 'I' && b[2] == 'F' && b[3] == 'F'
+                && b[8] == 'W' && b[9] == 'A' && b[10] == 'V' && b[11] == 'E';
+    }
+
+    private static int readLeInt(byte[] b, int at) {
+        return (b[at] & 0xff) | ((b[at + 1] & 0xff) << 8)
+                | ((b[at + 2] & 0xff) << 16) | ((b[at + 3] & 0xff) << 24);
     }
 
     private static String sha256Hex(byte[] data) throws Exception {
