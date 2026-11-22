@@ -29,7 +29,7 @@ class SubtitleFormatterTest {
 
     @Test
     void prefersBreakingAfterPunctuation() {
-        String text = "Wait, before you go, there is one more thing I need to say to you.";
+        String text = "Wait, before you go, there is one more thing I need to say.";
         List<String> lines = SubtitleFormatter.wrap(text);
 
         assertEquals(2, lines.size());
