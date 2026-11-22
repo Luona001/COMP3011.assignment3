@@ -95,7 +95,11 @@ public class VideoPlayerModel {
     private int intFrameRate;
     private int totalVideoFrames;
     private long relativeSeekBaseUs = NO_SEEK_REQUEST;
-
+    private boolean drainPending;
+    private long drainSinceNs;
+    static final long DRAIN_GRACE_NS = 250_000_000L;
+    static final long DRAIN_TIMEOUT_NS = 2_000_000_000L;
+    
     public VideoPlayerModel(
             boolean audioEnabled,
             List<FrameProcessorType> frameProcessorTypes,
@@ -203,6 +207,10 @@ public class VideoPlayerModel {
         long logicalTimestampUs = clampSeekTimestamp(timestampUs);
         long grabTimestampUs = displayableSeekTimestamp(logicalTimestampUs);
 
+        if (drainPending) {
+            closePlaybackResources();
+        }
+        
         if (!playbackOpen) {
             startPlayback(grabTimestampUs, pauseRequested, logicalTimestampUs);
             return;
@@ -322,6 +330,13 @@ public class VideoPlayerModel {
         if (heldFrame != null && heldFrame.targetTimeNs() <= now) {
             displayHeldFrame();
         }
+
+        if (drainPending) {
+            boolean queuesEmpty = heldFrame == null && displayQueue.isEmpty();
+            if (shouldCompleteDrain(queuesEmpty, System.nanoTime() - drainSinceNs)) {
+                completeFinishPlayback();
+            }
+        }
     }
 
     private void displayHeldFrame() {
@@ -394,6 +409,14 @@ public class VideoPlayerModel {
     }
 
     private void finishPlayback() {
+        if (!playbackOpen) {
+            return;
+        }
+        drainSinceNs = System.nanoTime();
+        drainPending = true;
+    }
+
+    private void completeFinishPlayback() {
         long endTimestampUs = videoDurationUs != NO_SEEK_REQUEST
                 ? videoDurationUs
                 : clock.positionUs();
@@ -404,6 +427,11 @@ public class VideoPlayerModel {
         relativeSeekBaseUs = endTimestampUs;
         notifyStatusChanged("Playback finished");
         notifyPlaybackStateChanged();
+    }
+
+    static boolean shouldCompleteDrain(boolean queuesEmpty, long drainingNs) {
+        return (queuesEmpty && drainingNs >= DRAIN_GRACE_NS)
+                || drainingNs >= DRAIN_TIMEOUT_NS;
     }
 
     private void handlePlaybackError(Exception e) {
@@ -417,6 +445,7 @@ public class VideoPlayerModel {
     private void closePlaybackResources() {
         playbackTimer.stop();
         playbackOpen = false;
+        drainPending = false;
         pendingAudio.clear();
         clock.reset(clock.positionUs());
         audioAvailable = false;
