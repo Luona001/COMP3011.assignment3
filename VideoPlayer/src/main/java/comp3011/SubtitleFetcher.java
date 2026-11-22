@@ -33,7 +33,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *
  *   1. local disk cache (~/.comp3011/subtitles) - survives restarts, keeps
  *      subtitles working during a network outage if seen before;
- *   2. else extract the original media audio to MP3 (WAV fallback),
+ *   2. else extract the original media audio to WAV (MP3 fallback),
  *      POST it to http://localhost:8080/api/v1/subtitles with retries;
  *   3. parse segments, apply the 1s/7s display rules, wrap lines, save the
  *      response to the disk cache and publish cues to SubtitleTrack.
@@ -95,13 +95,14 @@ public final class SubtitleFetcher {
         }
     }
 
-    /** Extracts the original media audio; MP3 (small), WAV as fallback. */
+    /** Extracts the original media audio; WAV first - PCM stays byte-stable so the
+     *  server can region-cache excerpts - MP3 as fallback. */
     private static Audio extractAudio(File mediaFile) throws Exception {
         try {
-            return new Audio(extractAsMp3(mediaFile), "audio.mp3");
-        } catch (Exception e) {
-            System.err.println("MP3 extraction failed, trying WAV: " + e);
             return new Audio(extractAsWav(mediaFile), "audio.wav");
+        } catch (Exception e) {
+            System.err.println("WAV extraction failed, trying MP3: " + e);
+            return new Audio(extractAsMp3(mediaFile), "audio.mp3");
         }
     }
 
