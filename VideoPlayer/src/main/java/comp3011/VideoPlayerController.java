@@ -36,6 +36,7 @@ public class VideoPlayerController {
     public VideoPlayerController(
             boolean audioEnabled,
             List<FrameProcessorType> frameProcessorTypes,
+            boolean subtitlesInitial,
             BiConsumer<Integer, Integer> videoSizeChangedHandler) {
         this.view = new VideoPlayerView();
         this.videoSizeChangedHandler = videoSizeChangedHandler;
@@ -59,9 +60,7 @@ public class VideoPlayerController {
         view.setSubtitlesSupported(subtitlesSupported);
         view.getSubtitleButton().setOnAction(_ -> toggleSubtitles());
 
-        if (subtitlesSupported) {
-            view.showSubtitleEnabled(true);
-        }
+        view.showSubtitleEnabled(subtitlesInitial);
     }
 
     public void installKeyboardShortcuts(Scene scene) {
@@ -154,14 +153,14 @@ public class VideoPlayerController {
     }
     
     private void toggleSubtitles() {
-        if (!subtitlesSupported) {
-            return;
-        }
         boolean nowVisible = SubtitleTrack.get().toggleVisible();
         view.showSubtitleEnabled(nowVisible);
     }
     
     public void onSubtitleStatus(String message) {
-        javafx.application.Platform.runLater(() -> view.setStatus(message));
+        try {
+            javafx.application.Platform.runLater(() -> view.setStatus(message));
+        } catch (IllegalStateException e) {
+        }
     }
 }

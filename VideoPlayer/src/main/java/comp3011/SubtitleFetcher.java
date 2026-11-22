@@ -48,6 +48,8 @@ public final class SubtitleFetcher {
     private static final long MAX_DISPLAY_US = 7_000_000L;
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    private record Audio(byte[] data, String filename) {}
+    
     private SubtitleFetcher() {
     }
 
@@ -57,6 +59,7 @@ public final class SubtitleFetcher {
         track.reset();
         Thread worker = new Thread(() -> load(mediaFile, track, status), "subtitle-fetcher");
         worker.setDaemon(true);
+        worker.setPriority(Thread.MIN_PRIORITY);
         worker.start();
     }
 
@@ -68,9 +71,9 @@ public final class SubtitleFetcher {
             if (Files.isRegularFile(cacheFile)) {
                 body = Files.readString(cacheFile);
             } else {
-                byte[] audio = extractAudio(mediaFile);
-                status.accept(name + " - transcribing subtitles...");
-                body = post(audio, mediaFile.getName());
+            	Audio audio = extractAudio(mediaFile);
+            	status.accept(name + " - transcribing subtitles...");
+            	body = post(audio);
                 try {
                     Files.createDirectories(cacheDir());
                     Files.writeString(cacheFile, body);
@@ -88,19 +91,20 @@ public final class SubtitleFetcher {
 
     
     /** Extracts the original media audio; MP3 (small), WAV as fallback. */
-    private static byte[] extractAudio(File mediaFile) throws Exception {
+    private static Audio extractAudio(File mediaFile) throws Exception {
         try {
-            return extractAsMp3(mediaFile);
+            return new Audio(extractAsMp3(mediaFile), "audio.mp3");
         } catch (Exception e) {
             System.err.println("MP3 extraction failed, trying WAV: " + e);
-            return extractAsWav(mediaFile);
+            return new Audio(extractAsWav(mediaFile), "audio.wav");
         }
     }
 
     private static byte[] extractAsMp3(File mediaFile) throws Exception {
-        FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(mediaFile);
-        try {
-            grabber.start();
+    	FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(mediaFile);
+    	try {
+    	    grabber.setVideoOption("threads", "1");
+    	    grabber.start();
             if (!grabber.hasAudio()) {
                 throw new IOException("Media has no audio track");
             }
@@ -117,12 +121,12 @@ public final class SubtitleFetcher {
             recorder.setAudioBitrate(64_000);
             recorder.start();
             try {
-                Frame frame;
-                while ((frame = grabber.grab()) != null) {
-                    if (hasSamples(frame)) {
-                        recorder.recordSamples(frame.samples);
-                    }
-                }
+            	Frame frame;
+            	while ((frame = grabber.grabSamples()) != null) {
+            	    if (hasSamples(frame)) {
+            	        recorder.recordSamples(frame.samples);
+            	    }
+            	}
             } finally {
                 recorder.stop();
                 recorder.release();
@@ -138,9 +142,10 @@ public final class SubtitleFetcher {
     }
 
     private static byte[] extractAsWav(File mediaFile) throws Exception {
-        FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(mediaFile);
-        try {
-            grabber.start();
+    	FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(mediaFile);
+    	try {
+    	    grabber.setVideoOption("threads", "1");
+    	    grabber.start();
             if (!grabber.hasAudio()) {
                 throw new IOException("Media has no audio track");
             }
@@ -149,7 +154,7 @@ public final class SubtitleFetcher {
             AudioPlayer converter = new AudioPlayer();
             ByteArrayOutputStream pcm = new ByteArrayOutputStream();
             Frame frame;
-            while ((frame = grabber.grab()) != null) {
+            while ((frame = grabber.grabSamples()) != null) {
                 if (hasSamples(frame)) {
                     pcm.write(converter.copySamples(frame));
                 }
@@ -197,9 +202,19 @@ public final class SubtitleFetcher {
     }
 
     
-    private static String post(byte[] audio, String filename) throws Exception {
+    private static String post(Audio audio) throws Exception {
         String boundary = "----COMP3011Boundary" + UUID.randomUUID();
-        byte[] body = multipartBody(audio, filename, boundary);
+
+        String contentType = audio.filename().endsWith(".mp3")
+                ? "audio/mpeg"
+                : "audio/wav";
+
+        byte[] body = multipartBody(
+                audio.data(),
+                audio.filename(),
+                contentType,
+                boundary
+        );
 
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -229,16 +244,31 @@ public final class SubtitleFetcher {
         }
     }
 
-    private static byte[] multipartBody(byte[] audio, String filename, String boundary)
-            throws IOException {
+    static byte[] multipartBody(
+            byte[] audio,
+            String filename,
+            String contentType,
+            String boundary
+    ) throws IOException {
+
         String crlf = "\r\n";
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        out.write(("--" + boundary + crlf).getBytes(StandardCharsets.UTF_8));
-        out.write(("Content-Disposition: form-data; name=\"file\"; filename=\""
-                + filename + "\"" + crlf).getBytes(StandardCharsets.UTF_8));
-        out.write(("Content-Type: audio/mpeg" + crlf + crlf).getBytes(StandardCharsets.UTF_8));
+
+        out.write(("--" + boundary + crlf)
+                .getBytes(StandardCharsets.UTF_8));
+
+        out.write(("Content-Disposition: form-data; name=\"audio\"; filename=\""
+                + filename + "\"" + crlf)
+                .getBytes(StandardCharsets.UTF_8));
+
+        out.write(("Content-Type: " + contentType + crlf + crlf)
+                .getBytes(StandardCharsets.UTF_8));
+
         out.write(audio);
-        out.write((crlf + "--" + boundary + "--" + crlf).getBytes(StandardCharsets.UTF_8));
+
+        out.write((crlf + "--" + boundary + "--" + crlf)
+                .getBytes(StandardCharsets.UTF_8));
+
         return out.toByteArray();
     }
 

@@ -40,6 +40,10 @@ public final class SubtitleTrack {
     public boolean isVisible() {
         return visible;
     }
+    
+    public void setVisible(boolean visible) {
+        this.visible = visible;
+    }
 
     /** Returns the new visible state so callers can update the button icon. */
     public boolean toggleVisible() {

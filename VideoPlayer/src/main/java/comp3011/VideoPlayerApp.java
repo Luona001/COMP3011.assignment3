@@ -11,6 +11,7 @@
 package comp3011;
 
 import java.util.List;
+import java.util.ArrayList;
 
 import javafx.application.Application;
 import javafx.geometry.Rectangle2D;
@@ -43,9 +44,19 @@ public class VideoPlayerApp extends Application {
     public void start(Stage stage) {
         this.stage = stage;
 
+        List<FrameProcessorType> processors =
+                new ArrayList<>(commandLineController.getFrameProcessorTypes());
+
+        boolean subtitlesOn = processors.contains(FrameProcessorType.SUBTITLE);
+
+        if (!subtitlesOn) {
+            processors.add(FrameProcessorType.SUBTITLE);
+        }
+
         controller = new VideoPlayerController(
                 commandLineController.isAudioRequested(),
-                commandLineController.getFrameProcessorTypes(),
+                processors,
+                subtitlesOn,
                 this::setVideoSize);
 
         Scene scene = new Scene(controller.getView().getRoot());
@@ -61,12 +72,11 @@ public class VideoPlayerApp extends Application {
         stage.outputScaleYProperty().addListener((_, _, _) -> updateVideoSize());
         stage.setOnCloseRequest(_ -> controller.shutdown());
 
-        if (commandLineController.getFrameProcessorTypes()
-                .contains(FrameProcessorType.SUBTITLE)) {
-            SubtitleFetcher.start(
-                    commandLineController.getVideoFile(),
-                    controller::onSubtitleStatus);
-        }
+        SubtitleFetcher.start(
+                commandLineController.getVideoFile(),
+                controller::onSubtitleStatus);
+
+        SubtitleTrack.get().setVisible(subtitlesOn);
         
         playVideo();
     }
