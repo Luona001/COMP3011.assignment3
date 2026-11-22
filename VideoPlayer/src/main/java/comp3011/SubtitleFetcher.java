@@ -71,9 +71,15 @@ public final class SubtitleFetcher {
             if (Files.isRegularFile(cacheFile)) {
                 body = Files.readString(cacheFile);
             } else {
-            	Audio audio = extractAudio(mediaFile);
-            	status.accept(name + " - transcribing subtitles...");
-            	body = post(audio);
+                try {
+                    Thread.sleep(3000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                Audio audio = extractAudio(mediaFile);
+                status.accept(name + " - transcribing subtitles...");
+                body = post(audio);
                 try {
                     Files.createDirectories(cacheDir());
                     Files.writeString(cacheFile, body);
@@ -89,7 +95,6 @@ public final class SubtitleFetcher {
         }
     }
 
-    
     /** Extracts the original media audio; MP3 (small), WAV as fallback. */
     private static Audio extractAudio(File mediaFile) throws Exception {
         try {
